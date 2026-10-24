@@ -1,70 +1,73 @@
-from uagents import Agent, Context, Model
-from uagents_core.contrib.protocols.chat import ChatMessage, TextContent, ChatAcknowledgement
-from datetime import datetime
-from uuid import uuid4
 
-agent = Agent(name="RailMitra-Orchestrator")
+from uagents import Agent, Context, Protocol
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    TextContent,
+    EndSessionContent,
+    chat_protocol_spec,
+)
 
-# Replace with your actual Yatra-Vendor-Network agent1q... address
-VENDOR_AGENT_ADDRESS = "agent1q..."
+agent = Agent()
 
-class VendorQuoteRequest(Model):
-    request_id: str
-    train_number: str
-    delay_minutes: int
-    next_station: str
-    destination: str
+chat_proto = Protocol(spec=chat_protocol_spec)
 
-class VendorQuoteResponse(Model):
-    request_id: str
-    quote_id: str
-    summary_markdown: str
 
-@agent.on_message(model=ChatMessage)
-async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
-    await ctx.send(sender, ChatAcknowledgement(timestamp=datetime.utcnow(), acknowledged_msg_id=msg.msg_id))
-    
-    ctx.storage.set("last_user_sender", sender)
-    req_id = str(uuid4())
-    
-    user_text = ""
-    for item in msg.content:
-        if isinstance(item, TextContent):
-            user_text = item.text.strip()
+@chat_proto.on_message(ChatMessage)
+async def handle_chat(
+    ctx: Context,
+    sender: str,
+    msg: ChatMessage,
+):
+    await ctx.send(
+        sender,
+        ChatAcknowledgement(
+            acknowledged_msg_id=msg.msg_id
+        ),
+    )
 
-    if "pay" in user_text.lower() or "confirm" in user_text.lower():
-        await ctx.send(sender, ChatMessage(
-            timestamp=datetime.utcnow(),
-            msg_id=uuid4(),
-            content=[TextContent(type="text", text="🎉 **Payment Verified (0.1 FET)!** All bookings (E-Catering at Mathura Jn & Cab Reschedule) confirmed successfully.")]
-        ))
-        return
+    text = msg.text()
 
-    if VENDOR_AGENT_ADDRESS.startswith("agent1"):
-        await ctx.send(
-            VENDOR_AGENT_ADDRESS,
-            VendorQuoteRequest(
-                request_id=req_id,
-                train_number="12002",
-                delay_minutes=185,
-                next_station="Mathura Jn",
-                destination="Greater Noida"
-            )
-        )
-    
-    await ctx.send(sender, ChatMessage(
-        timestamp=datetime.utcnow(),
-        msg_id=uuid4(),
-        content=[TextContent(type="text", text="📡 **RailMitra Intent Parsed:** Train `12002` delayed by **185 mins**. Contacting `Yatra-Vendor-Network` for live quotes...\n\n👉 Reply **`CONFIRM & PAY`** once quotes arrive to complete the 0.1 FET settlement.")]
-    ))
+    await ctx.send(
+        sender,
+        ChatMessage(
+            content=[
+                TextContent(
+                    type="text",
+                    text=(
+                        "RailMitra-Orchestrator is online. "
+                        f"I received: {text}"
+                    ),
+                ),
+                EndSessionContent(type="end-session"),
+            ],
+        ),
+    )
 
-@agent.on_message(model=VendorQuoteResponse)
-async def handle_vendor_response(ctx: Context, sender: str, msg: VendorQuoteResponse):
-    user_sender = ctx.storage.get("last_user_sender")
-    if user_sender:
-        response_text = f"✅ **Recovery Package Received (`{msg.quote_id}`):**\n\n{msg.summary_markdown}\n\n👉 Reply **`CONFIRM & PAY`** to approve settlement."
-        await ctx.send(user_sender, ChatMessage(
-            timestamp=datetime.utcnow(),
-            msg_id=uuid4(),
-            content=[TextContent(type="text", text=response_text)]
-        ))
+
+@chat_proto.on_message(ChatAcknowledgement)
+async def handle_ack(
+    ctx: Context,
+    sender: str,
+    msg: ChatAcknowledgement,
+):
+    ctx.logger.info("Chat acknowledgement received")
+
+
+# Diagnostic: identify missing protocol handlers before
+# Agentverse attempts to register the protocol.
+
+models = set(chat_proto.models.keys())
+
+handlers = (
+    set(chat_proto.signed_message_handlers.keys())
+    | set(chat_proto.unsigned_message_handlers.keys())
+)
+
+missing = models - handlers
+
+print("CHAT_PROTOCOL_MODELS:", len(models))
+print("CHAT_PROTOCOL_HANDLERS:", len(handlers))
+print("CHAT_PROTOCOL_MISSING:", missing)
+
+agent.include(chat_proto, publish_manifest=True)
