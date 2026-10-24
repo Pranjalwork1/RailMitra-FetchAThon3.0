@@ -1,0 +1,2 @@
+uagents>=0.14.0
+uagents-core>=0.1.0
